@@ -1,3 +1,4 @@
+// src/App.tsx
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -41,6 +42,7 @@ function App() {
       addLog(`Found Maya Python at: ${path}`);
       setIsReady(true);
     } catch (error) {
+      console.error("Error finding Maya:", error);
       addLog(`Error: Maya installation not found. Please install Maya to use this tool.`);
       setIsReady(false);
     }
@@ -51,7 +53,7 @@ function App() {
     setLogMessages(prev => [...prev, message]);
   };
 
-  // Drag and drop handlers with enhanced logging
+  // Drag and drop handlers
   const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -73,7 +75,7 @@ function App() {
     e.stopPropagation();
   };
 
-  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -81,42 +83,66 @@ function App() {
       dropAreaRef.current.classList.remove('drag-active');
     }
 
-    console.log("Files dropped:", e.dataTransfer.files);
+    const items = e.dataTransfer.items;
+    if (!items) {
+      addLog("No items found in drop");
+      return;
+    }
 
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const fileList = Array.from(e.dataTransfer.files);
-      console.log("Files array:", fileList);
-
-      // For Tauri v2, we need a different approach for file paths
-      const filePaths: string[] = [];
+    addLog("Processing dropped items...");
+    
+    // Get files from drag event
+    const filePromises: Promise<string[]>[] = [];
+    
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       
-      for (const file of fileList) {
-        // @ts-ignore - path property added by Tauri v2
-        if (file.path) {
-          // @ts-ignore
-          const path = file.path;
-          if (path.toLowerCase().endsWith('.ma') || path.toLowerCase().endsWith('.mb')) {
-            filePaths.push(path);
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) {
+          addLog(`Processing dropped item: ${file.name}`);
+          
+          // For Tauri v2, file objects have a "path" property
+          // @ts-ignore - path property added by Tauri v2
+          if (file.path) {
+            // @ts-ignore
+            const path = file.path as string;
+            addLog(`Found path: ${path}`);
+            
+            if (path.toLowerCase().endsWith('.ma') || path.toLowerCase().endsWith('.mb')) {
+              filePromises.push(Promise.resolve([path]));
+            } else {
+              addLog(`Skipping non-Maya file: ${path}`);
+            }
+          } else {
+            addLog(`Warning: Could not get path for ${file.name}. Try using the Browse button instead.`);
           }
-        } else {
-          // Fallback for browsers not supporting path property
-          addLog(`Warning: Could not get path for ${file.name}. Try using the Browse button instead.`);
         }
-      }
-
-      if (filePaths.length > 0) {
-        setSelectedFiles(filePaths);
-
-        if (filePaths.length === 1) {
-          addLog(`Selected file: ${filePaths[0]}`);
-        } else {
-          addLog(`Selected ${filePaths.length} files`);
-          filePaths.forEach(path => addLog(`  - ${path}`));
-        }
-      } else {
-        addLog("No Maya files (.ma or .mb) were found in the dropped items or paths couldn't be accessed.");
       }
     }
+
+    // Combine all promises and update selected files
+    Promise.all(filePromises)
+      .then(results => {
+        const allPaths = results.flat();
+        
+        if (allPaths.length > 0) {
+          setSelectedFiles(allPaths);
+          
+          if (allPaths.length === 1) {
+            addLog(`Selected file: ${allPaths[0]}`);
+          } else {
+            addLog(`Selected ${allPaths.length} files`);
+            allPaths.forEach(path => addLog(`  - ${path}`));
+          }
+        } else {
+          addLog("No Maya files (.ma or .mb) were found in the dropped items or paths couldn't be accessed.");
+        }
+      })
+      .catch(error => {
+        console.error("Error processing dropped files:", error);
+        addLog(`Error processing dropped files: ${error}`);
+      });
   };
 
   const selectFiles = async () => {

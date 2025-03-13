@@ -1,6 +1,6 @@
 // src-tauri/src/main.rs
 use std::process::Command;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fs;
 use std::env;
 use serde::{Deserialize, Serialize};
@@ -47,34 +47,56 @@ fn main() {
 
 // Ensure cleaner script is in both required locations
 fn setup_cleaner_script() -> Result<(), String> {
-    // Source script path
-    let tauri_dir = match std::env::current_dir() {
+    // Source script path - Get the executable's directory
+    let current_exe = match env::current_exe() {
         Ok(path) => path,
-        Err(e) => return Err(format!("Failed to get current directory: {}", e))
+        Err(e) => return Err(format!("Failed to get current executable path: {}", e))
     };
     
-    let source_script = tauri_dir.join("cleaner_script.py");
+    let exe_dir = match current_exe.parent() {
+        Some(path) => path.to_path_buf(),
+        None => return Err("Failed to get parent directory of executable".to_string())
+    };
     
-    // Target script path in debug directory
-    let debug_dir = tauri_dir.join("target").join("debug");
-    let debug_script = debug_dir.join("cleaner_script.py");
+    // Try multiple possible locations for the cleaner script
+    let possible_script_locations = [
+        // Check next to executable
+        exe_dir.join("cleaner_script.py"),
+        // Check in resources directory
+        exe_dir.join("resources").join("cleaner_script.py"),
+        // Check in current directory
+        env::current_dir().unwrap_or_default().join("cleaner_script.py"),
+        // Check in src-tauri for dev mode
+        env::current_dir().unwrap_or_default().join("src-tauri").join("cleaner_script.py")
+    ];
     
-    if source_script.exists() {
-        // Create directories if they don't exist
-        if !debug_dir.exists() {
-            if let Err(e) = fs::create_dir_all(&debug_dir) {
-                return Err(format!("Failed to create debug directory: {}", e));
+    // Find the first script that exists
+    let mut script_found = false;
+    for source_script in &possible_script_locations {
+        if source_script.exists() {
+            println!("Found cleaner script at: {:?}", source_script);
+            script_found = true;
+            
+            // Target script path in executable directory
+            let target_script = exe_dir.join("cleaner_script.py");
+            
+            // Only copy if it doesn't exist already or is different
+            if !target_script.exists() || 
+               fs::read(source_script).unwrap_or_default() != fs::read(&target_script).unwrap_or_default() {
+                println!("Copying script to: {:?}", target_script);
+                if let Err(e) = fs::copy(source_script, &target_script) {
+                    eprintln!("Warning: Failed to copy script to executable directory: {}", e);
+                }
             }
+            
+            break;
         }
-        
-        // Copy script to debug directory
-        if let Err(e) = fs::copy(&source_script, &debug_script) {
-            return Err(format!("Failed to copy script to debug directory: {}", e));
-        }
-        
+    }
+    
+    if script_found {
         Ok(())
     } else {
-        Err(format!("Source script not found at: {:?}", source_script))
+        Err(format!("Cleaner script not found. Checked locations: {:?}", possible_script_locations))
     }
 }
 
@@ -117,28 +139,28 @@ fn run_cleaner_script(
     path: Option<&str>, 
     maya_exe: &str
 ) -> Result<CleaningResult, String> {
+    // Get the executable's directory for finding the script
+    let current_exe = match env::current_exe() {
+        Ok(path) => path,
+        Err(e) => return Err(format!("Failed to get current executable path: {}", e))
+    };
+    
+    let exe_dir = match current_exe.parent() {
+        Some(path) => path.to_path_buf(),
+        None => return Err("Failed to get parent directory of executable".to_string())
+    };
+    
+    // Look for the script in the executable directory
+    let script_path = exe_dir.join("cleaner_script.py");
+    
+    if !script_path.exists() {
+        return Err(format!("Cleaner script not found at: {:?}", script_path));
+    }
+    
     // Temporary files for results and logs
     let temp_dir = env::temp_dir();
     let results_file = temp_dir.join("maya_cleaner_results.json");
     let log_file = temp_dir.join("maya_cleaner_log.txt");
-    
-    // First check both possible script locations
-    let tauri_dir = match std::env::current_dir() {
-        Ok(path) => path,
-        Err(e) => return Err(format!("Failed to get current directory: {}", e))
-    };
-    
-    let script_path_1 = tauri_dir.join("cleaner_script.py");
-    let script_path_2 = tauri_dir.join("target").join("debug").join("cleaner_script.py");
-    
-    let script_path = if script_path_2.exists() {
-        script_path_2
-    } else if script_path_1.exists() {
-        script_path_1
-    } else {
-        return Err(format!("Cleaner script not found. Checked locations:\n1. {:?}\n2. {:?}", 
-                          script_path_1, script_path_2));
-    };
     
     // Build the command
     let mut cmd = Command::new(maya_exe);
@@ -154,6 +176,8 @@ fn run_cleaner_script(
     if let Some(p) = path {
         cmd.arg("--path").arg(p);
     }
+    
+    println!("Running command: {:?}", cmd);
     
     // Run the command
     let output = cmd.output().map_err(|e| format!("Failed to run Maya Python: {}", e))?;
