@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use std::sync::Mutex;
 use std::path::PathBuf;
+use tauri::Runtime;
+use std::io::Read;
 
 // Define the result structure that matches our Python script output
 #[derive(Debug, Serialize, Deserialize)]
