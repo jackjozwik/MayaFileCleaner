@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 interface CleaningResult {
@@ -18,7 +19,6 @@ function App() {
   const [results, setResults] = useState<CleaningResult | null>(null);
   const [logMessages, setLogMessages] = useState<string[]>([]);
   const logContainerRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const dropAreaRef = useRef<HTMLDivElement>(null);
 
   // Check for Maya installation on startup
@@ -87,77 +87,65 @@ function App() {
       const fileList = Array.from(e.dataTransfer.files);
       console.log("Files array:", fileList);
 
-      // Get filenames only for now
-      const filenames = fileList.map(file => file.name);
-      console.log("Filenames:", filenames);
-
-      // Filter Maya files
-      const mayaFiles = filenames.filter(name =>
-        name.toLowerCase().endsWith('.ma') ||
-        name.toLowerCase().endsWith('.mb')
-      );
-
-      if (mayaFiles.length > 0) {
-        setSelectedFiles(mayaFiles);
-
-        if (mayaFiles.length === 1) {
-          addLog(`Selected file: ${mayaFiles[0]}`);
+      // For Tauri v2, we need a different approach for file paths
+      const filePaths: string[] = [];
+      
+      for (const file of fileList) {
+        // @ts-ignore - path property added by Tauri v2
+        if (file.path) {
+          // @ts-ignore
+          const path = file.path;
+          if (path.toLowerCase().endsWith('.ma') || path.toLowerCase().endsWith('.mb')) {
+            filePaths.push(path);
+          }
         } else {
-          addLog(`Selected ${mayaFiles.length} files`);
-          mayaFiles.forEach(path => addLog(`  - ${path}`));
+          // Fallback for browsers not supporting path property
+          addLog(`Warning: Could not get path for ${file.name}. Try using the Browse button instead.`);
+        }
+      }
+
+      if (filePaths.length > 0) {
+        setSelectedFiles(filePaths);
+
+        if (filePaths.length === 1) {
+          addLog(`Selected file: ${filePaths[0]}`);
+        } else {
+          addLog(`Selected ${filePaths.length} files`);
+          filePaths.forEach(path => addLog(`  - ${path}`));
         }
       } else {
-        addLog("No Maya files (.ma or .mb) were found in the dropped items.");
+        addLog("No Maya files (.ma or .mb) were found in the dropped items or paths couldn't be accessed.");
       }
     }
   };
 
-  const selectFiles = () => {
-    // Use the hidden file input
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
-  // Updated file handling to get full paths in App.tsx
-
-  // Replace handleFileInputChange with this version:
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    console.log("Files selected:", files);
-
-    if (files && files.length > 0) {
-      // Try to get full paths if possible
-      // In Tauri v2, we need to try different approaches for file paths
-
-      const selectedPaths: string[] = [];
-
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        console.log(`File ${i} details:`, file);
-
-        // Try all possible ways to get the path
-        // @ts-ignore - path might exist on File in Tauri
-        const path = file.path || (file as any).webkitRelativePath || file.name;
-
-        // Log what we found
-        console.log(`Found path for ${file.name}:`, path);
-        selectedPaths.push(path);
-
-        // Also try to log all properties on the file object
-        console.log("All properties:", Object.getOwnPropertyNames(file));
-      }
-
-      if (selectedPaths.length > 0) {
-        setSelectedFiles(selectedPaths);
-
-        if (selectedPaths.length === 1) {
-          addLog(`Selected file: ${selectedPaths[0]}`);
+  const selectFiles = async () => {
+    try {
+      // Use Tauri v2 dialog API
+      const selected = await open({
+        multiple: true,
+        filters: [{
+          name: 'Maya Files',
+          extensions: ['ma', 'mb']
+        }]
+      });
+      
+      if (selected) {
+        // Convert to array if it's a single string
+        const files = Array.isArray(selected) ? selected : [selected];
+        
+        setSelectedFiles(files);
+        
+        if (files.length === 1) {
+          addLog(`Selected file: ${files[0]}`);
         } else {
-          addLog(`Selected ${selectedPaths.length} files`);
-          selectedPaths.forEach(path => addLog(`  - ${path}`));
+          addLog(`Selected ${files.length} files`);
+          files.forEach(path => addLog(`  - ${path}`));
         }
       }
+    } catch (error) {
+      console.error("File selection error:", error);
+      addLog(`Error selecting files: ${error}`);
     }
   };
 
@@ -238,13 +226,8 @@ function App() {
 
   const clearSelection = () => {
     setSelectedFiles([]);
-    // Also reset the file input if needed
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
     addLog('File selection cleared');
   };
-
 
   return (
     <div className="container">
@@ -253,22 +236,12 @@ function App() {
       <div className="instructions-card">
         <h3>How to Clean Maya Files</h3>
         <ol className="instruction-list">
-          <li>Copy your Maya files to the same folder as this application</li>
-          <li>Click Browse and select the files you want to clean</li>
+          <li>Select Maya files using the Browse button or drag and drop them</li>
           <li>Click the "Clean Selected Files" button</li>
+          <li>Review the log for results</li>
         </ol>
-        <p className="note">Note: Place Maya files in the same directory as this app for best results.</p>
+        <p className="note">Note: You can select Maya files from anywhere on your computer.</p>
       </div>
-
-      {/* Hidden file input element */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        style={{ display: 'none' }}
-        multiple
-        accept=".ma,.mb"
-        onChange={handleFileInputChange}
-      />
 
       {isReady ? (
         <div className="content-area">

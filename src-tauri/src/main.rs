@@ -1,14 +1,11 @@
 // src-tauri/src/main.rs
 use std::process::Command;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
 use std::env;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use std::sync::Mutex;
-use std::path::PathBuf;
-use tauri::Runtime;
-use std::io::Read;
 
 // Define the result structure that matches our Python script output
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,6 +29,9 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(AppState {
             maya_exe_path: Mutex::new(None),
         })
@@ -185,102 +185,35 @@ fn run_cleaner_script(
     Ok(results)
 }
 
-// Add this function somewhere in your code
-// Update these functions in your main.rs
-
-fn resolve_path(file_path: &str) -> PathBuf {
-    println!("Resolving path for: {}", file_path);
-    let path = Path::new(file_path);
-    
-    // If it's already an absolute path, use it directly
-    if path.is_absolute() {
-        println!("  Path is absolute: {}", file_path);
-        return path.to_path_buf();
-    }
-    
-    // If it's just a filename, check in current directory first
-    if let Ok(current_dir) = env::current_dir() {
-        let full_path = current_dir.join(path);
-        println!("  Checking current dir: {}", full_path.display());
-        if full_path.exists() {
-            println!("  Found in current dir: {}", full_path.display());
-            return full_path;
-        }
-    }
-    
-    // Also check in the Tauri app directory
-    if let Ok(exe_path) = env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let app_path = exe_dir.join(path);
-            println!("  Checking app dir: {}", app_path.display());
-            if app_path.exists() {
-                println!("  Found in app dir: {}", app_path.display());
-                return app_path;
-            }
-        }
-    }
-    
-    // Also check relative to the user's directory
-    if let Some(home_dir) = dirs::home_dir() {
-        let home_path = home_dir.join(path);
-        println!("  Checking home dir: {}", home_path.display());
-        if home_path.exists() {
-            println!("  Found in home dir: {}", home_path.display());
-            return home_path;
-        }
-        
-        // Try in Downloads
-        let downloads_path = home_dir.join("Downloads").join(path);
-        println!("  Checking Downloads dir: {}", downloads_path.display());
-        if downloads_path.exists() {
-            println!("  Found in Downloads dir: {}", downloads_path.display());
-            return downloads_path;
-        }
-        
-        // Try in Documents
-        let docs_path = home_dir.join("Documents").join(path);
-        println!("  Checking Documents dir: {}", docs_path.display());
-        if docs_path.exists() {
-            println!("  Found in Documents dir: {}", docs_path.display());
-            return docs_path;
-        }
-    }
-    
-    // If we didn't find it, return the original path
-    println!("  Could not find file, returning original path: {}", path.display());
-    path.to_path_buf()
-}
-
-// Then update clean_maya_scene to handle file selection more gracefully
-
+// Clean a Maya scene file
 #[tauri::command]
 fn clean_maya_scene(file_path: String, state: State<AppState>) -> Result<CleaningResult, String> {
     println!("Called clean_maya_scene with path: {}", file_path);
     
-    // Resolve the path first
-    let resolved_path = resolve_path(&file_path);
-    
-    // Check if file exists
-    if !resolved_path.exists() {
-        println!("File does not exist after resolution: {}", resolved_path.display());
-        
-        // Try checking for a file with this name in common directories
-        // Create a "dummy" result for now to allow testing
-        return Err(format!("File does not exist: {}. Tried resolving to: {}. \nPlease copy the Maya file to the same folder as this application and try again.", 
-                         file_path, resolved_path.display()));
+    // Validate the path exists
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}. Please check if the file exists and you have permission to access it.", file_path));
     }
     
-    println!("File exists at: {}", resolved_path.display());
+    // Check if it's a Maya file
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.to_lowercase() != "ma" && ext.to_lowercase() != "mb" {
+        return Err(format!("File is not a Maya file (.ma or .mb): {}", file_path));
+    }
+    
+    println!("File exists at: {}", file_path);
     let maya_exe = find_maya_exe(state)?;
-    run_cleaner_script("scene", Some(&resolved_path.to_string_lossy()), &maya_exe)
+    run_cleaner_script("scene", Some(&file_path), &maya_exe)
 }
 
 // Clean a directory of Maya files
 #[tauri::command]
 fn clean_maya_directory(dir_path: String, state: State<AppState>) -> Result<CleaningResult, String> {
     // Check if directory exists
-    if !Path::new(&dir_path).exists() || !Path::new(&dir_path).is_dir() {
-        return Err(format!("Directory does not exist: {}", dir_path));
+    let path = Path::new(&dir_path);
+    if !path.exists() || !path.is_dir() {
+        return Err(format!("Directory not found: {}", dir_path));
     }
     
     let maya_exe = find_maya_exe(state)?;
