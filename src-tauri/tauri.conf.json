@@ -35,8 +35,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "utils.py"
-    ]
+    "resources": ["utils.py"],
+    "category": "Utility",
+    "shortDescription": "Clean Maya files of potential malware",
+    "publisher": "Jack Jozwik"
   }
 }

@@ -1,4 +1,3 @@
-// src-tauri/src/main.rs
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
@@ -9,6 +8,7 @@ use std::process::Command;
 use std::path::Path;
 use std::fs;
 use std::env;
+use std::io::Write;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use std::sync::Mutex;
@@ -23,16 +23,25 @@ struct CleaningResult {
     processed_count: u32,
 }
 
-// App state to hold cached Maya executable path
+// App state to hold cached Maya executable path and script path
 struct AppState {
     maya_exe_path: Mutex<Option<String>>,
+    script_path: Mutex<Option<String>>,
 }
 
+// Embed the Python script directly into the executable as a byte array
+// This will be extracted at runtime to a temporary file
+const EMBEDDED_SCRIPT: &[u8] = include_bytes!("../utils.py");
+
 fn main() {
-    // Copy the cleaner script to necessary locations
-    if let Err(e) = setup_utils() {
-        eprintln!("Warning: Could not setup cleaner script: {}", e);
-    }
+    // Extract the script on startup instead of searching for it
+    let script_path = match extract_script_to_temp() {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Warning: Could not extract cleaner script: {}", e);
+            String::new()
+        }
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -40,6 +49,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
             maya_exe_path: Mutex::new(None),
+            script_path: Mutex::new(Some(script_path)),
         })
         .invoke_handler(tauri::generate_handler![
             find_maya_exe,
@@ -51,59 +61,20 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-// Ensure cleaner script is in both required locations
-fn setup_utils() -> Result<(), String> {
-    // Source script path - Get the executable's directory
-    let current_exe = match env::current_exe() {
-        Ok(path) => path,
-        Err(e) => return Err(format!("Failed to get current executable path: {}", e))
-    };
+// Extract the embedded script to a temporary file
+fn extract_script_to_temp() -> Result<String, String> {
+    let temp_dir = env::temp_dir();
+    let script_path = temp_dir.join("utils.py");
     
-    let exe_dir = match current_exe.parent() {
-        Some(path) => path.to_path_buf(),
-        None => return Err("Failed to get parent directory of executable".to_string())
-    };
+    // Write the embedded script to the temporary file
+    let mut file = fs::File::create(&script_path)
+        .map_err(|e| format!("Failed to create temporary script file: {}", e))?;
     
-    // Try multiple possible locations for the cleaner script
-    let possible_script_locations = [
-        // Check next to executable
-        exe_dir.join("utils.py"),
-        // Check in resources directory
-        exe_dir.join("resources").join("utils.py"),
-        // Check in current directory
-        env::current_dir().unwrap_or_default().join("utils.py"),
-        // Check in src-tauri for dev mode
-        env::current_dir().unwrap_or_default().join("src-tauri").join("utils.py")
-    ];
+    file.write_all(EMBEDDED_SCRIPT)
+        .map_err(|e| format!("Failed to write script content: {}", e))?;
     
-    // Find the first script that exists
-    let mut script_found = false;
-    for source_script in &possible_script_locations {
-        if source_script.exists() {
-            println!("Found cleaner script at: {:?}", source_script);
-            script_found = true;
-            
-            // Target script path in executable directory
-            let target_script = exe_dir.join("utils.py");
-            
-            // Only copy if it doesn't exist already or is different
-            if !target_script.exists() || 
-               fs::read(source_script).unwrap_or_default() != fs::read(&target_script).unwrap_or_default() {
-                println!("Copying script to: {:?}", target_script);
-                if let Err(e) = fs::copy(source_script, &target_script) {
-                    eprintln!("Warning: Failed to copy script to executable directory: {}", e);
-                }
-            }
-            
-            break;
-        }
-    }
-    
-    if script_found {
-        Ok(())
-    } else {
-        Err(format!("Cleaner script not found. Checked locations: {:?}", possible_script_locations))
-    }
+    println!("Extracted script to: {:?}", script_path);
+    Ok(script_path.to_string_lossy().to_string())
 }
 
 // Find Maya's Python executable (mayapy.exe)
@@ -143,24 +114,21 @@ fn find_maya_exe(state: State<AppState>) -> Result<String, String> {
 fn run_utils(
     mode: &str, 
     path: Option<&str>, 
-    maya_exe: &str
+    maya_exe: &str,
+    state: State<AppState>
 ) -> Result<CleaningResult, String> {
-    // Get the executable's directory for finding the script
-    let current_exe = match env::current_exe() {
-        Ok(path) => path,
-        Err(e) => return Err(format!("Failed to get current executable path: {}", e))
+    // Get the script path from state
+    let script_path = {
+        let script_path_lock = state.script_path.lock().unwrap();
+        match &*script_path_lock {
+            Some(path) => path.clone(),
+            None => return Err("Cleaner script not available".to_string())
+        }
     };
     
-    let exe_dir = match current_exe.parent() {
-        Some(path) => path.to_path_buf(),
-        None => return Err("Failed to get parent directory of executable".to_string())
-    };
-    
-    // Look for the script in the executable directory
-    let script_path = exe_dir.join("utils.py");
-    
-    if !script_path.exists() {
-        return Err(format!("Cleaner script not found at: {:?}", script_path));
+    // Check if the script exists
+    if !Path::new(&script_path).exists() {
+        return Err(format!("Cleaner script not found at: {}", script_path));
     }
     
     // Temporary files for results and logs
@@ -233,8 +201,8 @@ fn clean_maya_scene(file_path: String, state: State<AppState>) -> Result<Cleanin
     }
     
     println!("File exists at: {}", file_path);
-    let maya_exe = find_maya_exe(state)?;
-    run_utils("scene", Some(&file_path), &maya_exe)
+    let maya_exe = find_maya_exe(state.clone())?;
+    run_utils("scene", Some(&file_path), &maya_exe, state)
 }
 
 // Clean a directory of Maya files
@@ -246,13 +214,13 @@ fn clean_maya_directory(dir_path: String, state: State<AppState>) -> Result<Clea
         return Err(format!("Directory not found: {}", dir_path));
     }
     
-    let maya_exe = find_maya_exe(state)?;
-    run_utils("directory", Some(&dir_path), &maya_exe)
+    let maya_exe = find_maya_exe(state.clone())?;
+    run_utils("directory", Some(&dir_path), &maya_exe, state)
 }
 
 // Clean Maya user directories
 #[tauri::command]
 fn clean_maya_user_dirs(state: State<AppState>) -> Result<CleaningResult, String> {
-    let maya_exe = find_maya_exe(state)?;
-    run_utils("user", None, &maya_exe)
+    let maya_exe = find_maya_exe(state.clone())?;
+    run_utils("user", None, &maya_exe, state)
 }
