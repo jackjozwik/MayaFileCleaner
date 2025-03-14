@@ -1,4 +1,10 @@
 // src-tauri/src/main.rs
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
+
+// src-tauri/src/main.rs
 use std::process::Command;
 use std::path::Path;
 use std::fs;

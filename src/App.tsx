@@ -13,14 +13,15 @@ interface CleaningResult {
 }
 
 function App() {
-  const [mayaPath, setMayaPath] = useState<string | null>(null);
+  // Remove the unused mayaPath state variable
   const [isReady, setIsReady] = useState<boolean>(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [results, setResults] = useState<CleaningResult | null>(null);
   const [logMessages, setLogMessages] = useState<string[]>([]);
   const logContainerRef = useRef<HTMLDivElement>(null);
-  const dropAreaRef = useRef<HTMLDivElement>(null);
+  const [showToast, setShowToast] = useState<boolean>(false);
+  const [isHovering, setIsHovering] = useState<boolean>(false);
 
   // Check for Maya installation on startup
   useEffect(() => {
@@ -34,12 +35,26 @@ function App() {
     }
   }, [logMessages]);
 
+  // Hide toast after a few seconds
+  useEffect(() => {
+    if (showToast) {
+      const timer = setTimeout(() => {
+        setShowToast(false);
+      }, 10000); // Hide after 10 seconds
+
+      return () => clearTimeout(timer);
+    }
+  }, [showToast]);
+
   const checkMayaInstallation = async () => {
     try {
+      // Only add this log message once
       addLog("Initializing Maya File Cleaner...");
+      
       const path = await invoke<string>('find_maya_exe');
-      setMayaPath(path);
+      // Just log the path without storing it in state
       addLog(`Found Maya Python at: ${path}`);
+      
       setIsReady(true);
     } catch (error) {
       console.error("Error finding Maya:", error);
@@ -53,98 +68,16 @@ function App() {
     setLogMessages(prev => [...prev, message]);
   };
 
-  // Drag and drop handlers
-  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (dropAreaRef.current) {
-      dropAreaRef.current.classList.add('drag-active');
-    }
+  // For file selection area
+  const handleAreaMouseEnter = () => {
+    setIsHovering(true);
   };
 
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (dropAreaRef.current) {
-      dropAreaRef.current.classList.remove('drag-active');
-    }
+  const handleAreaMouseLeave = () => {
+    setIsHovering(false);
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (dropAreaRef.current) {
-      dropAreaRef.current.classList.remove('drag-active');
-    }
-
-    const items = e.dataTransfer.items;
-    if (!items) {
-      addLog("No items found in drop");
-      return;
-    }
-
-    addLog("Processing dropped items...");
-    
-    // Get files from drag event
-    const filePromises: Promise<string[]>[] = [];
-    
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      
-      if (item.kind === 'file') {
-        const file = item.getAsFile();
-        if (file) {
-          addLog(`Processing dropped item: ${file.name}`);
-          
-          // For Tauri v2, file objects have a "path" property
-          // @ts-ignore - path property added by Tauri v2
-          if (file.path) {
-            // @ts-ignore
-            const path = file.path as string;
-            addLog(`Found path: ${path}`);
-            
-            if (path.toLowerCase().endsWith('.ma') || path.toLowerCase().endsWith('.mb')) {
-              filePromises.push(Promise.resolve([path]));
-            } else {
-              addLog(`Skipping non-Maya file: ${path}`);
-            }
-          } else {
-            addLog(`Warning: Could not get path for ${file.name}. Try using the Browse button instead.`);
-          }
-        }
-      }
-    }
-
-    // Combine all promises and update selected files
-    Promise.all(filePromises)
-      .then(results => {
-        const allPaths = results.flat();
-        
-        if (allPaths.length > 0) {
-          setSelectedFiles(allPaths);
-          
-          if (allPaths.length === 1) {
-            addLog(`Selected file: ${allPaths[0]}`);
-          } else {
-            addLog(`Selected ${allPaths.length} files`);
-            allPaths.forEach(path => addLog(`  - ${path}`));
-          }
-        } else {
-          addLog("No Maya files (.ma or .mb) were found in the dropped items or paths couldn't be accessed.");
-        }
-      })
-      .catch(error => {
-        console.error("Error processing dropped files:", error);
-        addLog(`Error processing dropped files: ${error}`);
-      });
-  };
-
+  // For browsing files
   const selectFiles = async () => {
     try {
       // Use Tauri v2 dialog API
@@ -222,6 +155,9 @@ function App() {
         cleaned_count: totalIssuesFixed,
         processed_count: successCount
       });
+      
+      // Show toast with results
+      setShowToast(true);
 
       addLog(`Cleaning complete: Processed ${successCount} of ${selectedFiles.length} files, fixed ${totalIssuesFixed} issues`);
     } catch (error) {
@@ -238,6 +174,7 @@ function App() {
       addLog('Cleaning Maya user directories...');
       const result = await invoke<CleaningResult>('clean_maya_user_dirs');
       setResults(result);
+      setShowToast(true);
       addLog(`Cleaning complete: ${result.message.replace('infections', 'issues')}`);
       result.details.forEach(detail =>
         addLog(detail.replace('infections', 'issues').replace('infected', 'affected'))
@@ -257,102 +194,81 @@ function App() {
 
   return (
     <div className="container">
-      <h1>Maya File Cleaner</h1>
-
-      <div className="instructions-card">
-        <h3>How to Clean Maya Files</h3>
-        <ol className="instruction-list">
-          <li>Select Maya files using the Browse button or drag and drop them</li>
-          <li>Click the "Clean Selected Files" button</li>
-          <li>Review the log for results</li>
-        </ol>
-        <p className="note">Note: You can select Maya files from anywhere on your computer.</p>
+      <div className="app-header">
+        <h1>Maya File Cleaner</h1>
       </div>
 
       {isReady ? (
         <div className="content-area">
-          <div className="card-container">
-            {/* Main Actions Card */}
-            <div className="card">
-              <h2>Clean Maya Files</h2>
-
-              <div
-                ref={dropAreaRef}
-                className="drop-area"
-                onDragEnter={handleDragEnter}
-                onDragLeave={handleDragLeave}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
+          {/* Main Actions Card */}
+          <div className="main-card">
+            <div 
+              className={`file-select-area ${isHovering ? 'hover-active' : ''}`}
+              onMouseEnter={handleAreaMouseEnter}
+              onMouseLeave={handleAreaMouseLeave}
+              onClick={selectFiles}
+            >
+              <p>Select Maya file(s)</p>
+              <button 
+                onClick={(e) => { e.stopPropagation(); selectFiles(); }} 
+                className="browse-button"
               >
-                <div className="drop-icon">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                </div>
-                <p>Drag & drop Maya files here or <button onClick={selectFiles} className="browse-button">Browse...</button></p>
-              </div>
-
-              {selectedFiles.length > 0 && (
-                <div className="selected-files">
-                  <div className="selected-header">
-                    <strong>{selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected</strong>
-                    <button onClick={clearSelection} className="clear-button">Clear</button>
-                  </div>
-                  <div className="file-list">
-                    {selectedFiles.map((file, index) => (
-                      <div key={index} className="file-item" title={file}>
-                        {file}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="action-buttons">
-                <button
-                  onClick={cleanSelectedFiles}
-                  disabled={selectedFiles.length === 0 || loading}
-                  className="primary-button"
-                >
-                  {loading ? 'Cleaning...' : `Clean Selected File${selectedFiles.length !== 1 ? 's' : ''}`}
-                </button>
-
-                <div className="divider">OR</div>
-
-                <button
-                  onClick={cleanMayaUserDirs}
-                  disabled={loading}
-                  className="secondary-button"
-                >
-                  {loading ? 'Cleaning...' : 'Clean Maya User Settings'}
-                </button>
-              </div>
+                Browse...
+              </button>
             </div>
 
-            {/* Results Card (shown when there are results) */}
-            {results && (
-              <div className="card results-card">
-                <h2>Cleaning Results</h2>
-                <p className={results.status === 'success' ? 'success' : 'error'}>
-                  {results.message.replace('infections', 'issues')}
-                </p>
-                <div className="stats">
-                  <div>
-                    <span>Files Processed:</span>
-                    <span>{results.processed_count}</span>
-                  </div>
-                  <div>
-                    <span>Issues Fixed:</span>
-                    <span>{results.cleaned_count}</span>
-                  </div>
+            {selectedFiles.length > 0 && (
+              <div className="selected-files">
+                <div className="selected-header">
+                  <strong>{selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected</strong>
+                  <button onClick={clearSelection} className="clear-button">Clear</button>
+                </div>
+                <div className="file-list">
+                  {selectedFiles.map((file, index) => (
+                    <div key={index} className="file-item" title={file}>
+                      {file}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
+
+            <div className="action-buttons">
+              <button
+                onClick={cleanSelectedFiles}
+                disabled={selectedFiles.length === 0 || loading}
+                className="primary-button"
+              >
+                {loading ? (
+                  <span className="button-with-spinner">
+                    <span className="spinner-small"></span>
+                    Cleaning...
+                  </span>
+                ) : (
+                  `Clean Selected File${selectedFiles.length !== 1 ? 's' : ''}`
+                )}
+              </button>
+
+              {/* <div className="divider">AND</div> */}
+
+              <button
+                onClick={cleanMayaUserDirs}
+                disabled={loading}
+                className="secondary-button"
+              >
+                {loading ? (
+                  <span className="button-with-spinner">
+                    <span className="spinner-small"></span>
+                    Cleaning...
+                  </span>
+                ) : (
+                  'Clean Maya User Settings'
+                )}
+              </button>
+            </div>
           </div>
 
-          {/* Log Card - Fixed at bottom */}
+          {/* Log Card - Directly attached to the main card */}
           <div className="log-card">
             <h3>Operation Log</h3>
             <div className="log-container" ref={logContainerRef}>
@@ -361,8 +277,39 @@ function App() {
                   {message}
                 </div>
               ))}
+              {loading && (
+                <div className="log-line loading-message">
+                  <span className="spinner-small"></span>
+                  Processing... please wait
+                </div>
+              )}
             </div>
           </div>
+          
+          {/* Toast notification for results */}
+          {showToast && results && (
+            <div className="toast-notification">
+              <div className="toast-content">
+                <div className="toast-header">
+                  <h3>Cleaning Complete</h3>
+                  <button className="close-toast" onClick={() => setShowToast(false)}>×</button>
+                </div>
+                <p className={results.status === 'success' ? 'success' : 'error'}>
+                  {results.message.replace('infections', 'issues')}
+                </p>
+                <div className="toast-stats">
+                  <div className="stat-item">
+                    <span>Files Processed:</span>
+                    <span>{results.processed_count}</span>
+                  </div>
+                  <div className="stat-item">
+                    <span>Issues Fixed:</span>
+                    <span>{results.cleaned_count}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="loading-screen">

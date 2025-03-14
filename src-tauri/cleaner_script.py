@@ -10,6 +10,8 @@ import json
 import stat
 import shutil
 import argparse
+import tempfile
+import datetime
 from pathlib import Path
 
 # Initialize standalone Maya
@@ -32,6 +34,22 @@ class MayaFileCleaner:
             "cleaned_count": 0,
             "processed_count": 0
         }
+        # Create backup directory in temp folder
+        self.backup_dir = self.create_backup_directory()
+        
+    def create_backup_directory(self):
+        """Create a backup directory in the temp folder"""
+        # Create a "maya_cleaner_backups" directory in the OS temp folder
+        temp_dir = os.path.join(tempfile.gettempdir(), "maya_cleaner_backups")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Create a dated subdirectory for today's backups
+        today = datetime.datetime.now().strftime("%Y%m%d")
+        today_dir = os.path.join(temp_dir, today)
+        os.makedirs(today_dir, exist_ok=True)
+        
+        self.log(f"Created backup directory: {today_dir}")
+        return today_dir
         
     def log(self, message):
         """Log a message to both stdout and log file if provided"""
@@ -61,8 +79,10 @@ class MayaFileCleaner:
         # Make file writable
         self.make_writable(file_path)
         
-        # Create a backup
-        backup_path = f"{file_path}.backup"
+        # Create a backup in temp directory
+        file_name = os.path.basename(file_path)
+        timestamp = datetime.datetime.now().strftime("%H%M%S")
+        backup_path = os.path.join(self.backup_dir, f"{file_name}_{timestamp}.backup")
         try:
             shutil.copy2(file_path, backup_path)
             self.log(f"Created backup: {backup_path}")
@@ -105,7 +125,7 @@ class MayaFileCleaner:
             # If most lines have issues, replace the file
             if len(problem_lines) > len(clean_lines):
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write("# This file was cleaned of problematic code\n# Original backup saved as .backup\n")
+                    f.write("# This file was cleaned of problematic code\n# Original backup saved in temp directory\n")
                 self.log(f"Replaced problematic userSetup.py: {file_path}")
             else:
                 # Write back only the clean lines
@@ -139,8 +159,10 @@ class MayaFileCleaner:
         # Make file writable
         self.make_writable(file_path)
         
-        # Create backup
-        backup_path = f"{file_path}.backup"
+        # Create backup in temp directory
+        file_name = os.path.basename(file_path)
+        timestamp = datetime.datetime.now().strftime("%H%M%S")
+        backup_path = os.path.join(self.backup_dir, f"{file_name}_{timestamp}.backup")
         try:
             shutil.copy2(file_path, backup_path)
             self.log(f"Created backup: {backup_path}")
@@ -285,9 +307,12 @@ class MayaFileCleaner:
                         # Make writable
                         self.make_writable(file_path)
                         
-                        # Create backup
-                        backup_path = f"{file_path}.backup"
+                        # Create backup in temp directory
+                        file_name = os.path.basename(file_path)
+                        timestamp = datetime.datetime.now().strftime("%H%M%S")
+                        backup_path = os.path.join(self.backup_dir, f"{file_name}_{timestamp}.backup")
                         shutil.copy2(file_path, backup_path)
+                        self.log(f"Created backup: {backup_path}")
                         
                         # Remove file
                         os.remove(file_path)
