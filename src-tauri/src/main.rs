@@ -30,7 +30,7 @@ struct AppState {
 
 fn main() {
     // Copy the cleaner script to necessary locations
-    if let Err(e) = setup_cleaner_script() {
+    if let Err(e) = setup_utils() {
         eprintln!("Warning: Could not setup cleaner script: {}", e);
     }
 
@@ -52,7 +52,7 @@ fn main() {
 }
 
 // Ensure cleaner script is in both required locations
-fn setup_cleaner_script() -> Result<(), String> {
+fn setup_utils() -> Result<(), String> {
     // Source script path - Get the executable's directory
     let current_exe = match env::current_exe() {
         Ok(path) => path,
@@ -67,13 +67,13 @@ fn setup_cleaner_script() -> Result<(), String> {
     // Try multiple possible locations for the cleaner script
     let possible_script_locations = [
         // Check next to executable
-        exe_dir.join("cleaner_script.py"),
+        exe_dir.join("utils.py"),
         // Check in resources directory
-        exe_dir.join("resources").join("cleaner_script.py"),
+        exe_dir.join("resources").join("utils.py"),
         // Check in current directory
-        env::current_dir().unwrap_or_default().join("cleaner_script.py"),
+        env::current_dir().unwrap_or_default().join("utils.py"),
         // Check in src-tauri for dev mode
-        env::current_dir().unwrap_or_default().join("src-tauri").join("cleaner_script.py")
+        env::current_dir().unwrap_or_default().join("src-tauri").join("utils.py")
     ];
     
     // Find the first script that exists
@@ -84,7 +84,7 @@ fn setup_cleaner_script() -> Result<(), String> {
             script_found = true;
             
             // Target script path in executable directory
-            let target_script = exe_dir.join("cleaner_script.py");
+            let target_script = exe_dir.join("utils.py");
             
             // Only copy if it doesn't exist already or is different
             if !target_script.exists() || 
@@ -140,7 +140,7 @@ fn find_maya_exe(state: State<AppState>) -> Result<String, String> {
 }
 
 // Run the cleaner script with Maya Python
-fn run_cleaner_script(
+fn run_utils(
     mode: &str, 
     path: Option<&str>, 
     maya_exe: &str
@@ -157,7 +157,7 @@ fn run_cleaner_script(
     };
     
     // Look for the script in the executable directory
-    let script_path = exe_dir.join("cleaner_script.py");
+    let script_path = exe_dir.join("utils.py");
     
     if !script_path.exists() {
         return Err(format!("Cleaner script not found at: {:?}", script_path));
@@ -234,7 +234,7 @@ fn clean_maya_scene(file_path: String, state: State<AppState>) -> Result<Cleanin
     
     println!("File exists at: {}", file_path);
     let maya_exe = find_maya_exe(state)?;
-    run_cleaner_script("scene", Some(&file_path), &maya_exe)
+    run_utils("scene", Some(&file_path), &maya_exe)
 }
 
 // Clean a directory of Maya files
@@ -247,12 +247,12 @@ fn clean_maya_directory(dir_path: String, state: State<AppState>) -> Result<Clea
     }
     
     let maya_exe = find_maya_exe(state)?;
-    run_cleaner_script("directory", Some(&dir_path), &maya_exe)
+    run_utils("directory", Some(&dir_path), &maya_exe)
 }
 
 // Clean Maya user directories
 #[tauri::command]
 fn clean_maya_user_dirs(state: State<AppState>) -> Result<CleaningResult, String> {
     let maya_exe = find_maya_exe(state)?;
-    run_cleaner_script("user", None, &maya_exe)
+    run_utils("user", None, &maya_exe)
 }
